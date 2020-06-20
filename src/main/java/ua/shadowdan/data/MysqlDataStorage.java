@@ -61,6 +61,11 @@ public class MysqlDataStorage implements DataStorage {
     @NotNull
     @Override
     public UserCreationResult createUser(long discordId, long fandomId) {
+        final long verifiedFandomId = getFandomIdFromDiscord(discordId);
+        final long verifiedDiscordId = getDiscordIdFromFandom(fandomId);
+        if (verifiedFandomId > 0 || verifiedDiscordId > 0) {
+            return new UserCreationResult(UserCreationResult.ResultType.ALREADY_VERIFIED, -1, verifiedDiscordId, verifiedFandomId);
+        }
         final long verificationKey = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
         try {
             PreparedStatement insert = getConnection().prepareStatement(

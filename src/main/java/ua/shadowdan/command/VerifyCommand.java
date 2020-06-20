@@ -8,13 +8,18 @@ import ua.shadowdan.data.DataStorage;
 import ua.shadowdan.data.UserCreationResult;
 import ua.shadowdan.util.FandomSimpleAPI;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
+
 /*
  * Created by SHADOWDAN_ on 29.05.2020 for project 'IscariBotV2'
  */
 //
 public class VerifyCommand extends Command {
 
-    private static final String FANDOM_NICKNAME_EXTRACTOR_PATTERN = "https?://(?:[a-zA-Z]{2}\\.)?[a-zA-Z-]+\\.fandom\\.com/wiki/(?:Стена_обсуждения|Участник|User|User_talk):(?:%20)?";
+    private static final Pattern NICK_PATTERN = Pattern.compile("https?://(?:[a-zA-Z]{2}\\.)?[a-zA-Z-]+\\.fandom\\.com(?:/[a-z]{2,3})?/wiki/(?:Стена_обсуждения|Участник|User|User_talk):(?:%20)?");
 
     public VerifyCommand() {
         this.name = "verify";
@@ -30,7 +35,17 @@ public class VerifyCommand extends Command {
         }
         event.async(() -> {
             String[] args = event.getArgs().split(" ");
-            String username = args[0].replaceAll(FANDOM_NICKNAME_EXTRACTOR_PATTERN, "");
+            String decodedUrl;
+            try {
+                decodedUrl = URLDecoder.decode(args[0], StandardCharsets.UTF_8.name());
+            } catch (UnsupportedEncodingException e) {
+                decodedUrl = null;
+            }
+            if (decodedUrl == null || !NICK_PATTERN.matcher(decodedUrl).lookingAt()) {
+                event.replyError("Ссылка профиля имеет неверный формат");
+                return;
+            }
+            String username = decodedUrl.replaceAll(NICK_PATTERN.pattern(), "");
             DataStorage dataStorage = IscariBot.getDataStorage();
             long discordId = event.getAuthor().getIdLong();
             long fandomId = FandomSimpleAPI.getUserId(username);
@@ -42,7 +57,7 @@ public class VerifyCommand extends Command {
             switch (result.getType()) {
                 case ALREADY_VERIFIED: {
                     User accountOwner = IscariBot.getJDA().retrieveUserById(result.getDiscordId()).complete();
-                    event.replyError(String.format("Аккаунт %s уже верефицирован пользователем %s", args[0], accountOwner.getName()));
+                    event.replyError(String.format("Аккаунт %s уже верефицирован пользователем %s", decodedUrl, accountOwner.getName()));
                     return;
                 }
                 case ERROR: {
@@ -54,7 +69,7 @@ public class VerifyCommand extends Command {
                     event.replySuccess(
                             "Запрос на верицикацию принят.\n"
                                     + "Что бы подтвердить что вы являетесь владельцем аккаунта напишите на странице https://community.fandom.com/wiki/Message_Wall:" + IscariBot.getPropertiesManager().getFandomBotUser() + "\n"
-                                    + "Код: " + result.getVerificationCode()
+                                    + "Сообщение с текстом: `" + result.getVerificationCode() + "`. И ожидайте. Среднее время ожидания: около 1й минуты"
                     );
                     return;
                 }
