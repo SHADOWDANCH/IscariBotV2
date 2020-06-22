@@ -15,6 +15,7 @@ public class PropertiesManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(PropertiesManager.class);
 
     private final Properties properties = new Properties();
+    private final Properties locale = new Properties();
 
     protected PropertiesManager() {
         try (InputStream inputStream = IscariBot.class.getResourceAsStream("/config.properties")) {
@@ -56,11 +57,20 @@ public class PropertiesManager {
         return properties.getProperty("database.table.prefix");
     }
 
-    public String getFandomBotUser() {
-        return properties.getProperty("fandom.bot.user");
-    }
-
     public long getVerifiedRoleId() {
         return Long.parseLong(properties.getProperty("verified.role.id"));
     }
+
+    public String getModeratorRoleName() {
+        return properties.getProperty("bot.moderator.role.name");
+    }
+
+    public String getFandomUserName() {
+        return properties.getProperty("fandom.user.name");
+    }
+
+    public String getFandomAccessToken() {
+        return properties.getProperty("fandom.user.access.token");
+    }
+
 }

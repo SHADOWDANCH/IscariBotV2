@@ -8,33 +8,30 @@ import org.jetbrains.annotations.NotNull;
 public interface DataStorage {
 
     /**
-     * Создать пользователя в базе данных.
-     * Если не верифицированый пользователь с совпадающими идентификаторами уже сущетсвует он будет преезаписан
-     * Созданный пользователь будет не верефицирован (т.е изменение данных привязки аккаунтов ещё возможно).
+     * Поопытаться начать процесс верификации пользователя
      *
      * @param discordId уникальный идентификатор пользователя discord
      * @param fandomId уникальный идентификатор пользователя mediawiki на fandom.com
-     * @return результат создания пользователя
+     * @return результат попытки
      */
     @NotNull
-    UserCreationResult createUser(long discordId, long fandomId);
+    UserCreationResult beginVerification(long discordId, long fandomId);
 
     /**
      * Верефицировать пользователя.
      *
      * @param fandomId уникальный идентификатор пользователя fandom.com
-     * @param verificationCode уникальный ключ подтвержения верификации, полученый из {@code DataStorage#createUser(long, long)}
-     * @param force верифицировать пользователя игнорируя коректность ключа
+     * @param verificationCode уникальный ключ подтвержения верификации
      * @return true - ключ совпал, пользователь верифицирован. false - ключ не совпал или произошла ошибка обработки запроса.
      */
-    boolean verifyUser(long fandomId, long verificationCode, boolean force);
+    boolean verifyUser(long fandomId, long verificationCode);
 
     /**
-     * Полное удаление данных о пользователе из базы данных.
+     * Отмена верификации пользователя
      *
      * @param discordId уникальный идентификатор пользователя discord
      */
-    void deleteUser(long discordId);
+    void cancelVerification(long discordId);
 
     /**
      * Получить идентификатор пользователя fandom.com привязаный к discord
@@ -62,5 +59,18 @@ public interface DataStorage {
         return getFandomIdFromDiscord(discordId) > 0;
     }
 
-    boolean isCodeVerified(long verificationCode);
+    /**
+     * Проверить является ли код верификации валидным (т.е ожидает подтверждения)
+     *
+     * @param verificationCode ключ подтверждения верификации
+     * @return результат проверки
+     */
+    boolean isCodeValid(long verificationCode);
+
+    /**
+     * Нужно ли в данный момент проверять стену сообщений
+     *
+     * @return результат
+     */
+    boolean shouldCheckWall();
 }

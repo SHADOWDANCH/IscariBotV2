@@ -1,16 +1,23 @@
 package ua.shadowdan.data;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
+import com.github.benmanes.caffeine.cache.RemovalListener;
 import com.mysql.cj.jdbc.MysqlDataSource;
 import lombok.SneakyThrows;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import ua.shadowdan.IscariBot;
+import ua.shadowdan.util.CommandUtil;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 /*
  * Created by SHADOWDAN_ on 30.05.2020 for project 'IscariBotV2'
@@ -24,6 +31,17 @@ public class MysqlDataStorage implements DataStorage {
     private Connection mysqlConnection;
 
     private long lastConnectionCheck;
+
+    private final Cache<Long, VerificationUser> awaitingVerification = Caffeine.newBuilder()
+            .removalListener((RemovalListener<Long, VerificationUser>) (fandomID, verificationUser, removalCause) -> {
+                if (removalCause == RemovalCause.EXPIRED) {
+                    IscariBot.getJDA().retrieveUserById(verificationUser.getDiscordID()).complete()
+                            .openPrivateChannel().complete()
+                            .sendMessage(CommandUtil.ERROR + " Ожидания подтверждения вашего аккаунта истекло. Заявка отклонена.").complete();
+                }
+            })
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .build();
 
     @SneakyThrows
     public MysqlDataStorage(String serverAddress, String user, String password, String databaseName, String tablePrefix) {
@@ -39,7 +57,6 @@ public class MysqlDataStorage implements DataStorage {
             getConnection().createStatement().execute(
                     "CREATE TABLE IF NOT EXISTS " + this.usersTableName
                             + " (discordid BIGINT NOT NULL, fandomid BIGINT NOT NULL, "
-                            + "verified BOOLEAN NOT NULL DEFAULT FALSE, code BIGINT NOT NULL, "
                             + "UNIQUE(discordid), UNIQUE(fandomid));");
         } catch (SQLException ex) {
             throw new RuntimeException("Failed to create tables.", ex);
@@ -60,66 +77,49 @@ public class MysqlDataStorage implements DataStorage {
 
     @NotNull
     @Override
-    public UserCreationResult createUser(long discordId, long fandomId) {
+    public UserCreationResult beginVerification(long discordId, long fandomId) {
+        VerificationUser awaitingVerificationUser = awaitingVerification.getIfPresent(fandomId);
+        if (awaitingVerificationUser != null) {
+            return new UserCreationResult(
+                    UserCreationResult.ResultType.AWAITING_VERIFICATION,
+                    awaitingVerificationUser.getVerificationCode(),
+                    awaitingVerificationUser.getDiscordID(),
+                    awaitingVerificationUser.getFandomID());
+        }
         final long verifiedFandomId = getFandomIdFromDiscord(discordId);
         final long verifiedDiscordId = getDiscordIdFromFandom(fandomId);
         if (verifiedFandomId > 0 || verifiedDiscordId > 0) {
             return new UserCreationResult(UserCreationResult.ResultType.ALREADY_VERIFIED, -1, verifiedDiscordId, verifiedFandomId);
         }
         final long verificationKey = ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
+        awaitingVerification.put(fandomId, new VerificationUser(discordId, fandomId, verificationKey));
+
+        return new UserCreationResult(UserCreationResult.ResultType.SUCCESS, verificationKey, discordId, fandomId);
+    }
+
+    @Override
+    public boolean verifyUser(long fandomId, long verificationCode) {
+        VerificationUser verificationUser = awaitingVerification.getIfPresent(fandomId);
+        if (verificationUser == null || verificationUser.getVerificationCode() != verificationCode) {
+            return false;
+        }
+
         try {
-            PreparedStatement insert = getConnection().prepareStatement(
-                    "INSERT INTO " + this.usersTableName + " (discordid, fandomid, verified, code) "
-                            + "VALUES (?, ?, false, ?) "
-                            + "ON DUPLICATE KEY UPDATE "
-                            + "discordid = CASE WHEN verified = 0 THEN VALUES(discordid) ELSE discordid END, "
-                            + "fandomid = CASE WHEN verified = 0 THEN VALUES(fandomid) ELSE fandomid END, "
-                            + "code = CASE WHEN verified = 0 THEN VALUES(code) ELSE code END;"
-            );
-            insert.setLong(1, discordId);
+            PreparedStatement insert = getConnection().prepareStatement("INSERT INTO " + this.usersTableName + " (discordid, fandomid) VALUES (?, ?);");
+            insert.setLong(1, verificationUser.getDiscordID());
             insert.setLong(2, fandomId);
-            insert.setLong(3, verificationKey);
-
-            int result = insert.executeUpdate();
-            if (result == 2) { // update
-                return new UserCreationResult(UserCreationResult.ResultType.SUCCESS_OVERWRITTEN, verificationKey, discordId, fandomId);
-            } else if (result == 1) { // insert or insert without modification
-                return new UserCreationResult(UserCreationResult.ResultType.SUCCESS, verificationKey, discordId, fandomId);
-            }
+            insert.execute();
         } catch (SQLException exception) {
-            LOGGER.warn("Error while creating user.", exception);
+            LOGGER.warn("Error while processing SQL request", exception);
+            return false;
         }
-        return new UserCreationResult(UserCreationResult.ResultType.ERROR, -1, -1, -1);
+
+        awaitingVerification.invalidate(fandomId);
+        return true;
     }
 
     @Override
-    public boolean verifyUser(long fandomId, long verificationCode, boolean force) {
-        try {
-            long result = 0;
-            if (!force) {
-                PreparedStatement select = getConnection().prepareStatement(
-                        "SELECT code FROM " + this.usersTableName + " WHERE fandomId = ?;"
-                );
-                select.setLong(1, fandomId);
-                ResultSet resultSet = select.executeQuery();
-                result = !resultSet.next() ? 0 : resultSet.getLong("code");
-            }
-            if (force || result == verificationCode) {
-                PreparedStatement update = getConnection().prepareStatement(
-                        "UPDATE " + this.usersTableName + " SET verified = true WHERE fandomId = ? AND code = ?;"
-                );
-                update.setLong(1, fandomId);
-                update.setLong(2, verificationCode);
-                return update.executeUpdate() > 0;
-            }
-        } catch (SQLException exception) {
-            LOGGER.warn("Error while verifying user", exception);
-        }
-        return false;
-    }
-
-    @Override
-    public void deleteUser(long discordId) {
+    public void cancelVerification(long discordId) {
         try {
             PreparedStatement delete = getConnection().prepareStatement(
                     "DELETE FROM " + this.usersTableName + " WHERE discordid = ?;"
@@ -135,7 +135,7 @@ public class MysqlDataStorage implements DataStorage {
     public long getFandomIdFromDiscord(long discordId) {
         try {
             PreparedStatement select = getConnection().prepareStatement(
-                    "SELECT fandomid FROM " + this.usersTableName + " WHERE discordid = ? AND verified = 1;"
+                    "SELECT fandomid FROM " + this.usersTableName + " WHERE discordid = ?;"
             );
             select.setLong(1, discordId);
             ResultSet resultSet = select.executeQuery();
@@ -151,7 +151,7 @@ public class MysqlDataStorage implements DataStorage {
     public long getDiscordIdFromFandom(long fandomId) {
         try {
             PreparedStatement select = getConnection().prepareStatement(
-                    "SELECT discordid FROM " + this.usersTableName + " WHERE fandomid = ? AND verified = 1;"
+                    "SELECT discordid FROM " + this.usersTableName + " WHERE fandomid = ?;"
             );
             select.setLong(1, fandomId);
             ResultSet resultSet = select.executeQuery();
@@ -164,18 +164,18 @@ public class MysqlDataStorage implements DataStorage {
     }
 
     @Override
-    public boolean isCodeVerified(long verificationCode) {
-        try {
-            PreparedStatement select = getConnection().prepareStatement(
-                    "SELECT verified FROM " + this.usersTableName
-                            + " WHERE code = ?;"
-            );
-            select.setLong(1, verificationCode);
-            ResultSet resultSet = select.executeQuery();
-            return resultSet.next() && resultSet.getBoolean("verified");
-        } catch (SQLException exception) {
-            LOGGER.warn("Error checking code verification.", exception);
+    public boolean isCodeValid(long verificationCode) {
+        for (VerificationUser user : awaitingVerification.asMap().values()) {
+            if (user.getVerificationCode() == verificationCode) {
+                return true;
+            }
         }
         return false;
+    }
+
+    @Override
+    public boolean shouldCheckWall() {
+        awaitingVerification.cleanUp();
+        return awaitingVerification.estimatedSize() > 0;
     }
 }

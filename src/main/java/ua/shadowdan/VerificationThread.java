@@ -5,6 +5,7 @@ import net.dv8tion.jda.api.entities.Role;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ua.shadowdan.data.DataStorage;
+import ua.shadowdan.util.CommandUtil;
 import ua.shadowdan.util.FandomSimpleAPI;
 
 import java.util.concurrent.TimeUnit;
@@ -30,48 +31,51 @@ public class VerificationThread extends Thread {
     public void run() {
         try {
             while (true) {
-                FandomSimpleAPI.getAllMessagesOnWall(propertiesManager.getFandomBotUser()).forEach(wallMessage -> {
-                    String messageBody = wallMessage.getBody();
-
+                if (dataStorage.shouldCheckWall()) {
                     LOGGER.debug("Performing scheduled wall posts check");
+                    FandomSimpleAPI.getAllMessagesOnWall(
+                            propertiesManager.getFandomUserName(),
+                            propertiesManager.getFandomAccessToken()
+                    ).forEach(wallMessage -> {
+                        String messageBody = wallMessage.getBody();
 
-                    final long verificationCode;
-                    try {
-                        verificationCode = Long.parseLong(messageBody);
-                    } catch (NumberFormatException ex) {
-                        return;
-                    }
-
-                    if (dataStorage.isCodeVerified(verificationCode)) {
-                        return;
-                    }
-
-                    String editedBy = wallMessage.getEditedBy();
-                    long editorId = FandomSimpleAPI.getUserId(editedBy.substring(editedBy.lastIndexOf(":") + 1));
-
-                    if (dataStorage.verifyUser(editorId, verificationCode, false)) {
-                        long discordID = dataStorage.getDiscordIdFromFandom(editorId);
-                        if (discordID <= 0) {
+                        final long verificationCode;
+                        try {
+                            verificationCode = Long.parseLong(messageBody);
+                        } catch (NumberFormatException ex) {
                             return;
                         }
 
-                        jda.getGuilds().forEach(guild -> {
-                            Role role = guild.getRoleById(propertiesManager.getVerifiedRoleId());
-                            if (role == null) {
-                                LOGGER.warn("Verification role not exists on guild.");
+                        if (!dataStorage.isCodeValid(verificationCode)) {
+                            return;
+                        }
+
+                        String editedBy = wallMessage.getEditedBy();
+                        long editorId = FandomSimpleAPI.getUserId(editedBy.substring(editedBy.lastIndexOf(":") + 1));
+
+                        if (dataStorage.verifyUser(editorId, verificationCode)) {
+                            long discordID = dataStorage.getDiscordIdFromFandom(editorId);
+                            if (discordID <= 0) {
                                 return;
                             }
-                            guild.addRoleToMember(discordID, role).complete();
-                        });
 
-                        jda.retrieveUserById(discordID).complete()
-                                .openPrivateChannel().complete()
-                                .sendMessage("Ваш аккаунт fandom.com успешно подтверждён").complete()
-                                .addReaction("\u2705").complete();
+                            jda.getGuilds().forEach(guild -> {
+                                Role role = guild.getRoleById(propertiesManager.getVerifiedRoleId());
+                                if (role == null) {
+                                    LOGGER.warn("Verification role not exists on guild.");
+                                    return;
+                                }
+                                guild.addRoleToMember(discordID, role).complete();
+                            });
 
-                        LOGGER.debug("Verified user " + editorId + " with code " + verificationCode);
-                    }
-                });
+                            jda.retrieveUserById(discordID).complete()
+                                    .openPrivateChannel().complete()
+                                    .sendMessage(CommandUtil.SUCCESS + " Ваш аккаунт fandom.com успешно подтверждён").complete();
+
+                            LOGGER.debug("Verified user " + editorId + " with code " + verificationCode);
+                        }
+                    });
+                }
                 Thread.sleep(TimeUnit.MINUTES.toMillis(1));
             }
         } catch (InterruptedException ignored) { }

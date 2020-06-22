@@ -24,7 +24,7 @@ public class UserCreationResult {
     public enum ResultType {
         SUCCESS,
         ALREADY_VERIFIED,
-        SUCCESS_OVERWRITTEN,
-        ERROR
+        ERROR,
+        AWAITING_VERIFICATION
     }
 }

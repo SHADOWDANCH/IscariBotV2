@@ -3,15 +3,16 @@ package ua.shadowdan.command;
 import com.jagrosh.jdautilities.command.Command;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import net.dv8tion.jda.api.entities.User;
-import ua.shadowdan.IscariBot;
+import ua.shadowdan.PropertiesManager;
 import ua.shadowdan.data.DataStorage;
 import ua.shadowdan.data.UserCreationResult;
+import ua.shadowdan.util.CommandUtil;
 import ua.shadowdan.util.FandomSimpleAPI;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 /*
  * Created by SHADOWDAN_ on 29.05.2020 for project 'IscariBotV2'
@@ -19,64 +20,78 @@ import java.util.regex.Pattern;
 //
 public class VerifyCommand extends Command {
 
-    private static final Pattern NICK_PATTERN = Pattern.compile("https?://(?:[a-zA-Z]{2}\\.)?[a-zA-Z-]+\\.fandom\\.com(?:/[a-z]{2,3})?/wiki/(?:Стена_обсуждения|Участник|User|User_talk):(?:%20)?");
+    private final PropertiesManager propertiesManager;
+    private final DataStorage dataStorage;
 
-    public VerifyCommand() {
+    public VerifyCommand(PropertiesManager propertiesManager, DataStorage dataStorage) {
         this.name = "verify";
         this.help = "привязка аккаунта fandom к аккаунту discord";
         this.guildOnly = false;
+        this.arguments = "[ссылка на профиль fandom.com]";
+
+        this.propertiesManager = propertiesManager;
+        this.dataStorage = dataStorage;
     }
 
     @Override
     protected void execute(CommandEvent event) {
         if (event.getArgs().isEmpty()) {
-            event.replyError("Используйте `" + event.getClient().getPrefix() + this.name + " [ссылка на профиль fandom.com]`");
+            CommandUtil.replyHelp(event, this);
             return;
         }
-        event.async(() -> {
+        event.reply("Обработка...", message -> event.async(() -> {
             String[] args = event.getArgs().split(" ");
             String decodedUrl;
             try {
                 decodedUrl = URLDecoder.decode(args[0], StandardCharsets.UTF_8.name());
             } catch (UnsupportedEncodingException e) {
-                decodedUrl = null;
+                decodedUrl = "";
             }
-            if (decodedUrl == null || !NICK_PATTERN.matcher(decodedUrl).lookingAt()) {
-                event.replyError("Ссылка профиля имеет неверный формат");
+            Matcher matcher = FandomSimpleAPI.NICK_PATTERN.matcher(decodedUrl);
+
+            if (decodedUrl.isEmpty() || !matcher.lookingAt()) {
+                message.editMessage(CommandUtil.ERROR + " Ссылка профиля имеет неверный формат.\nПример ссылки: `https://terraria.fandom.com/ru/wiki/Участник:SHADOWDAN66`").queue();
                 return;
             }
-            String username = decodedUrl.replaceAll(NICK_PATTERN.pattern(), "");
-            DataStorage dataStorage = IscariBot.getDataStorage();
+
+            String username = matcher.replaceAll("");
             long discordId = event.getAuthor().getIdLong();
             long fandomId = FandomSimpleAPI.getUserId(username);
-            if (dataStorage.isVerified(discordId)) {
-                event.replySuccess("Ваш аккаунт уже верифицирован.");
+            if (fandomId <= 0) {
+                message.editMessage(CommandUtil.ERROR + " Указаный аккаунт не найден").queue();
                 return;
             }
-            UserCreationResult result = dataStorage.createUser(discordId, fandomId);
+            if (dataStorage.isVerified(discordId)) {
+                message.editMessage(CommandUtil.SUCCESS + " Ваш аккаунт уже верифицирован.").queue();
+                return;
+            }
+            UserCreationResult result = dataStorage.beginVerification(discordId, fandomId);
             switch (result.getType()) {
                 case ALREADY_VERIFIED: {
-                    User accountOwner = IscariBot.getJDA().retrieveUserById(result.getDiscordId()).complete();
-                    event.replyError(String.format("Аккаунт %s уже верефицирован пользователем %s", decodedUrl, accountOwner.getName()));
+                    User accountOwner = event.getJDA().retrieveUserById(result.getDiscordId()).complete();
+                    message.editMessage(String.format(CommandUtil.ERROR + " Аккаунт %s уже верефицирован пользователем <@%s>", decodedUrl, accountOwner.getIdLong())).queue();
                     return;
                 }
                 case ERROR: {
-                    event.replyError("Произошла неизвестная ошибка обработки запроса. Сообщите персоналу или повторите позже.");
+                    message.editMessage(CommandUtil.ERROR + " Произошла неизвестная ошибка обработки запроса. Сообщите персоналу или повторите позже.").queue();
                     return;
                 }
-                case SUCCESS:
-                case SUCCESS_OVERWRITTEN: {
-                    event.replySuccess(
-                            "Запрос на верицикацию принят.\n"
-                                    + "Что бы подтвердить что вы являетесь владельцем аккаунта напишите на странице https://community.fandom.com/wiki/Message_Wall:" + IscariBot.getPropertiesManager().getFandomBotUser() + "\n"
-                                    + "Сообщение с текстом: `" + result.getVerificationCode() + "`. И ожидайте. Среднее время ожидания: около 1й минуты"
-                    );
+                case SUCCESS: {
+                    message.editMessage(
+                            CommandUtil.SUCCESS + " Запрос на верицикацию принят.\n"
+                                    + "Что бы подтвердить что вы являетесь владельцем аккаунта напишите на странице https://community.fandom.com/wiki/Message_Wall:" + propertiesManager.getFandomUserName() + "\n"
+                                    + "Сообщение с текстом: `" + result.getVerificationCode() + "`. Ожидайте. Среднее время ожидания: около 1й минуты"
+                    ).queue();
+                    return;
+                }
+                case AWAITING_VERIFICATION: {
+                    message.editMessage(CommandUtil.SUCCESS + " Этот аккаут ожидает подтверждения. Попробуйте через 5 минут").queue();
                     return;
                 }
                 default: {
-                    event.replyWarning("Ошибка обработки запроса: неизвестный результат. Сообщите персоналу");
+                    message.editMessage(CommandUtil.ERROR + " Ошибка обработки запроса: неизвестный результат. Сообщите персоналу").queue();
                 }
             }
-        });
+        }));
     }
 }
