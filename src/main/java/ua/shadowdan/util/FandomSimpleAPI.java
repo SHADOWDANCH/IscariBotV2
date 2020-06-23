@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
+import org.jetbrains.annotations.NotNull;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
@@ -12,6 +13,11 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -33,16 +39,24 @@ public class FandomSimpleAPI {
 
     public static final Pattern NICK_PATTERN = Pattern.compile("https?://(?:[a-zA-Z]{2}\\.)?[a-zA-Z-]+\\.fandom\\.com(?:/[a-z]{2,3})?/wiki/(?:Message_Wall|Стена_обсуждения|Участник|User|User_talk):(?:%20)?", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
+    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+
     private FandomSimpleAPI() { }
 
     public static long getUserId(String username) {
-        String response = HttpUtil.doGetRequest(String.format(USER_ID_QUERY, username));
+        HttpRequest request = HttpRequest.newBuilder()
+                .GET()
+                .uri(URI.create(String.format(USER_ID_QUERY, username)))
+                .build();
 
-        if (response == null) {
+        final JSONObject responseJson;
+        try {
+            String response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
+            responseJson = new JSONObject(response);
+        } catch (IOException | InterruptedException ignored) {
             return -1;
         }
 
-        JSONObject responseJson = new JSONObject(response);
         JSONArray users = responseJson.getJSONObject("query").getJSONArray("users");
         if (users.length() == 0) {
             return -1;
@@ -50,17 +64,23 @@ public class FandomSimpleAPI {
         return users.getJSONObject(0).getLong("userid");
     }
 
-/*    public static long getUserId(String username) {
+    /*public static long getUserId(String username) {
         List<FandomUserSimple> userInfo = getBasicUserInfo(username);
         return userInfo.size() > 0 ? userInfo.get(0).getUserID() : -1;
     }*/
 
     public static String getUserName(long userID) {
-        String response = HttpUtil.doGetRequest(String.format(USER_DETAILS_QUERY, userID));
-        if (response == null) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .GET()
+                .uri(URI.create(String.format(USER_DETAILS_QUERY, userID)))
+                .build();
+
+        try {
+            String response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
+            return new JSONObject(response).getJSONArray("items").getJSONObject(0).getString("name");
+        } catch (IOException | InterruptedException ignored) {
             return null;
         }
-        return new JSONObject(response).getJSONArray("items").getJSONObject(0).getString("name");
     }
 
     @NonNull
@@ -76,26 +96,32 @@ public class FandomSimpleAPI {
             Element editedByElement = messageBubble.getElementsByClass("edited-by").first();
             Element messageBodyElement = messageBubble.getElementsByClass("msg-body").first();
 
+            int messageId = Integer.parseInt(messageBubble.attr("data-id"));
             String messageTitle = messageTitleElement.getElementsByTag("a").text();
             String editedBy = editedByElement.getElementsByTag("a").first().attr("href");
             String messageBody = messageBodyElement.text();
 
-            list.add(new FandomWallMessage(messageTitle, editedBy, messageBody));
+            list.add(new FandomWallMessage(messageId, messageTitle, editedBy, messageBody));
         }
         return list;
     }
 
+    @NotNull
     public static List<FandomUserSimple> getBasicUserInfo(String... names) {
-        String basicInfoResponse = HttpUtil.doGetRequest(String.format(BASIC_USER_INFO_QUERY, String.join("|", names)));
-        if (basicInfoResponse == null) {
+        final String formattedUrl = String.format(BASIC_USER_INFO_QUERY, String.join("|", names))
+                .replace("|", "%7C");
+        HttpRequest basicInfoRequest = HttpRequest.newBuilder()
+                .GET()
+                .uri(URI.create(formattedUrl))
+                .build();
+
+        final JSONArray users;
+        try {
+            String basicInfoResponse = HTTP_CLIENT.send(basicInfoRequest, HttpResponse.BodyHandlers.ofString()).body();
+            users = new JSONObject(basicInfoResponse).getJSONObject("query").getJSONArray("users");
+        } catch (IOException | InterruptedException ignored) {
             return Collections.emptyList();
         }
-        List<FandomUserSimple> list = new ArrayList<>();
-        JSONArray users = new JSONObject(basicInfoResponse).getJSONObject("query").getJSONArray("users");
-
-        /*String ids = StreamSupport.stream(users.spliterator(), false)
-                .map(o -> "" + ((JSONObject) o).getLong("userid"))
-                .collect(Collectors.joining(","));*/
 
         StringJoiner ids = new StringJoiner(",");
         for (int o = 0; o < users.length(); o++) {
@@ -103,11 +129,18 @@ public class FandomSimpleAPI {
             ids.add(Long.toString(userId));
         }
 
-        String detailsRequest = HttpUtil.doGetRequest(String.format(USER_DETAILS_QUERY, ids.toString()));
-        JSONArray usersDetails = null;
-        if (detailsRequest != null) {
-            usersDetails = new JSONObject(detailsRequest).getJSONArray("items");
-        }
+        HttpRequest detailsRequest = HttpRequest.newBuilder()
+                .GET()
+                .uri(URI.create(String.format(USER_DETAILS_QUERY, ids.toString())))
+                .build();
+
+        JSONArray usersDetails = new JSONArray();
+        try {
+            String detailsResponse = HTTP_CLIENT.send(detailsRequest, HttpResponse.BodyHandlers.ofString()).body();
+            usersDetails = new JSONObject(detailsResponse).getJSONArray("items");
+        } catch (IOException | InterruptedException ignored) { }
+
+        List<FandomUserSimple> list = new ArrayList<>();
 
         for (int i = 0; i < users.length(); i++) {
             JSONObject jsonObject = users.getJSONObject(0);
@@ -118,7 +151,7 @@ public class FandomSimpleAPI {
             String gender = jsonObject.getString("gender");
             String avatarUrl = null;
 
-            for (int j = 0; usersDetails != null && j < usersDetails.length(); j++) {
+            for (int j = 0; j < usersDetails.length(); j++) {
                 JSONObject detailsJsonObject = usersDetails.getJSONObject(j);
                 if (detailsJsonObject.getLong("user_id") == userID) {
                     avatarUrl = detailsJsonObject.getString("avatar");
@@ -134,6 +167,7 @@ public class FandomSimpleAPI {
     @Getter
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     public static class FandomWallMessage {
+        private final int id;
         private final String title;
         private final String editedBy;
         private final String body;
@@ -141,7 +175,8 @@ public class FandomSimpleAPI {
         @Override
         public String toString() {
             return "FandomWallMessage{" +
-                    "title='" + title + '\'' +
+                    "id=" + id +
+                    ", title='" + title + '\'' +
                     ", editedBy='" + editedBy + '\'' +
                     ", body='" + body + '\'' +
                     '}';
@@ -152,14 +187,15 @@ public class FandomSimpleAPI {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             FandomWallMessage that = (FandomWallMessage) o;
-            return Objects.equals(title, that.title) &&
+            return id == that.id &&
+                    Objects.equals(title, that.title) &&
                     Objects.equals(editedBy, that.editedBy) &&
                     Objects.equals(body, that.body);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(title, editedBy, body);
+            return Objects.hash(id, title, editedBy, body);
         }
     }
 
