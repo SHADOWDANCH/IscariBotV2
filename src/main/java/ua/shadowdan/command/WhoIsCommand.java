@@ -51,7 +51,10 @@ public class WhoIsCommand extends Command {
 //            List<FandomSimpleAPI.FandomUserSimple> basicUserInfo = FandomSimpleAPI.getBasicUserInfo(FandomSimpleAPI.getUserName(fandomID));
 //            FandomSimpleAPI.FandomUserSimple firstUser = basicUserInfo.get(0);
 
-            message.editMessage(CommandUtil.SUCCESS + " https://community.fandom.com/wiki/User:" + FandomSimpleAPI.getUserName(fandomID)).queue();
+            message.editMessage(
+                    CommandUtil.SUCCESS + " https://community.fandom.com/wiki/User:"
+                            + FandomSimpleAPI.getUserName(fandomID).replace(" ", "%20")
+            ).queue();
 
 /*            MessageEmbed embed = new EmbedBuilder()
                     .setColor(Color.YELLOW)

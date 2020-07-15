@@ -78,8 +78,8 @@ public class FandomSimpleAPI {
         try {
             String response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
             return new JSONObject(response).getJSONArray("items").getJSONObject(0).getString("name");
-        } catch (IOException | InterruptedException ignored) {
-            return null;
+        } catch (IOException | InterruptedException ex) {
+            throw new RuntimeException("Error while retrieving username", ex);
         }
     }
 
