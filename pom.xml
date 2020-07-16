@@ -67,7 +67,7 @@
         <dependency>
             <groupId>net.dv8tion</groupId>
             <artifactId>JDA</artifactId>
-            <version>4.1.1_155</version>
+            <version>4.2.0_179</version>
             <scope>compile</scope>
             <exclusions>
                 <exclusion>
@@ -79,7 +79,7 @@
         <dependency>
             <groupId>com.jagrosh</groupId>
             <artifactId>jda-utilities-command</artifactId>
-            <version>3.0.3</version>
+            <version>3.0.4</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
