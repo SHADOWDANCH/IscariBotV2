@@ -78,9 +78,9 @@ public class VerifyCommand extends Command {
                 }
                 case SUCCESS: {
                     message.editMessage(
-                            CommandUtil.SUCCESS + " Запрос на верицикацию принят.\n"
-                                    + "Что бы подтвердить что вы являетесь владельцем аккаунта напишите на странице https://community.fandom.com/wiki/Message_Wall:" + propertiesManager.getFandomUserName() + "\n"
-                                    + "Сообщение с текстом: `" + result.getVerificationCode() + "`. Ожидайте. Среднее время ожидания: около 1й минуты"
+                            CommandUtil.SUCCESS + " Запрос на верификацию принят.\n"
+                                    + "Чтобы подтвердить, что вы являетесь владельцем аккаунта, напишите на странице https://community.fandom.com/wiki/Message_Wall:" + propertiesManager.getFandomUserName() + "\n"
+                                    + "Сообщение с текстом: `" + result.getVerificationCode() + "`. Ожидайте. Среднее время ожидания: около 1-й минуты"
                     ).queue();
                     return;
                 }
